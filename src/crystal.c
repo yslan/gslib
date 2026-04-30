@@ -74,7 +74,7 @@ static void uintcpy(uint *dst, const uint *src, uint n)
   else if(dst!=src) memmove(dst,src,n*sizeof(uint));
 }
 
-static uint crystal_move(struct crystal *p, uint cutoff, int send_hi)
+static ulong crystal_move(struct crystal *p, uint cutoff, int send_hi)
 {
   uint len, *src, *end;
   uint *keep = p->data.ptr, *send;
@@ -94,52 +94,58 @@ static uint crystal_move(struct crystal *p, uint cutoff, int send_hi)
     }
   }
   p->data.n = keep - (uint*)p->data.ptr;
-  return      send - (uint*)p->work.ptr;
+  //return      send - (uint*)p->work.ptr;
+  return (ulong)(send - (uint*)p->work.ptr);
 }
 
-static void crystal_exchange(struct crystal *p, uint send_n, uint targ,
+static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
                              int recvn, int tag)
 {
   comm_req req[3];
+  ulong count_long[2] = {0,0}, sum_long;
   uint count[2] = {0,0}, sum, *recv[2];
 
   if(recvn)   
-    comm_irecv(&req[1],&p->comm, &count[0],sizeof(uint), targ        ,tag);
+    comm_irecv(&req[1],&p->comm, &count_long[0],sizeof(ulong), targ        ,tag);
   if(recvn==2)
-    comm_irecv(&req[2],&p->comm, &count[1],sizeof(uint), p->comm.id-1,tag);
-  comm_isend(&req[0],&p->comm, &send_n,sizeof(uint), targ,tag);
+    comm_irecv(&req[2],&p->comm, &count_long[1],sizeof(ulong), p->comm.id-1,tag);
+  comm_isend(&req[0],&p->comm, &send_n_long,sizeof(ulong), targ,tag);
   comm_wait(req,recvn+1);
   
-  sum = p->data.n + count[0] + count[1];
-  buffer_reserve(&p->data,sum*sizeof(uint));
-  recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count[0];
-  p->data.n = sum;
+  sum_long = p->data.n + count_long[0] + count_long[1];
+  buffer_reserve(&p->data,sum_long*sizeof(uint));
+  recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
+  p->data.n = sum_long;
   
+  // TODO loop if n_send*sizeof(uint) > INT_MAX
   if(recvn)    comm_irecv(&req[1],&p->comm,
-                          recv[0],count[0]*sizeof(uint), targ        ,tag+1);
+                          recv[0],count_long[0]*sizeof(uint), targ        ,tag+1);
   if(recvn==2) comm_irecv(&req[2],&p->comm,
-                          recv[1],count[1]*sizeof(uint), p->comm.id-1,tag+1);
-  comm_isend(&req[0],&p->comm, p->work.ptr,send_n*sizeof(uint), targ,tag+1);
+                          recv[1],count_long[1]*sizeof(uint), p->comm.id-1,tag+1);
+  comm_isend(&req[0],&p->comm, p->work.ptr,send_n_long*sizeof(uint), targ,tag+1);
   comm_wait(req,recvn+1);
+  return sum_long;
 }
 
 void crystal_router(struct crystal *p)
 {
   uint bl=0, bh, nl;
   uint id = p->comm.id, n=p->comm.np;
-  uint send_n, targ, tag = 0;
+  uint targ, tag = 0;
+  ulong send_n_long;
+  slong send_n_long_b;
+  sint overflow;
   int send_hi, recvn;
   while(n>1) {
     nl = (n+1)/2, bh = bl+nl;
     send_hi = id<bh;
-    send_n = crystal_move(p,bh,send_hi);
+    send_n_long = crystal_move(p,bh,send_hi);
 
-    slong send_n_long = send_n;
-    send_n_long *= sizeof(uint);
-    sint overflow = (send_n_long >= INT_MAX);
+    send_n_long_b = send_n_long * sizeof(uint);
+    overflow = (send_n_long_b >= INT_MAX || send_n_long_b < 0);
     if (overflow) {
-      fprintf(stderr, "Error in crystal_router: rank = %d send_n = %lld (> "
-        "INT_MAX)\n", p->comm.id, send_n_long);
+      fprintf(stderr, "Error in crystal_router1: rank = %d send_n = %lld (> "
+        "INT_MAX)\n", p->comm.id, send_n_long_b);
       fflush(stderr);
       die(EXIT_FAILURE);
     }
@@ -147,8 +153,17 @@ void crystal_router(struct crystal *p)
     recvn = 1, targ = n-1-(id-bl)+bl;
     if(id==targ) targ=bh, recvn=0;
     if(n&1 && id==bh) recvn=2;
-    crystal_exchange(p,send_n,targ,recvn,tag);
+    send_n_long = crystal_exchange(p,send_n_long,targ,recvn,tag);
     if(id<bh) n=nl; else n-=nl,bl=bh;
     tag += 2;
+
+    send_n_long_b = send_n_long * sizeof(uint);
+    overflow = (send_n_long_b >= INT_MAX || send_n_long_b < 0);
+    if (overflow) {
+      fprintf(stderr, "Error in crystal_router2: rank = %d send_n = %lld (> "
+        "INT_MAX)\n", p->comm.id, send_n_long_b);
+      fflush(stderr);
+      die(EXIT_FAILURE);
+    }
   }
 }

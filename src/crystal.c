@@ -122,48 +122,56 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
   p->data.n = sum_long;
 
-  ulong soff=0, sleft=send_n_long;
-  ulong r1off=0, r1left=count_long[0];
-  ulong r2off=0, r2left=count_long[1];
-  
-  int nr = 0;
-  while(sleft || r1left || r2left) {
-    ulong sn=0, r1n=0, r2n=0;
-  
-    if(nr+3>nr_max){
-      comm_wait(req,nr);
-      nr = 0;
-    }
+  if(send_n_long > CR_MAX_N ||
+      count_long[0] > CR_MAX_N ||
+      count_long[1] > CR_MAX_N) {
 
-    if(recvn && r1left) {
-      r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
-      comm_irecv(&req[nr++],&p->comm,
-                 recv[0]+r1off,r1n*sizeof(uint),targ,tag+1);
-    }
-  
-    if(recvn==2 && r2left) {
-      r2n = (r2left > CR_MAX_N) ? CR_MAX_N : r2left;
-      comm_irecv(&req[nr++],&p->comm,
-                 recv[1]+r2off,r2n*sizeof(uint),p->comm.id-1,tag+1);
-    }
-  
-    if(sleft) {
-      sn = (sleft > CR_MAX_N) ? CR_MAX_N : sleft;
-      comm_isend(&req[nr++],&p->comm,
-                 (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
-    }
+    ulong soff=0, sleft=send_n_long;
+    ulong r1off=0, r1left=count_long[0];
+    ulong r2off=0, r2left=count_long[1];
 
-    r1off += r1n; r1left -= r1n;
-    r2off += r2n; r2left -= r2n;
-    soff  += sn;  sleft  -= sn;
+    int nr = 0;
+    while(sleft || r1left || r2left) {
+      ulong sn=0, r1n=0, r2n=0;
+
+      if(nr+3>nr_max){
+        comm_wait(req,nr);
+        nr = 0;
+      }
+
+      if(recvn && r1left) {
+        r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
+        comm_irecv(&req[nr++],&p->comm,
+                   recv[0]+r1off,r1n*sizeof(uint),targ,tag+1);
+      }
+
+      if(recvn==2 && r2left) {
+        r2n = (r2left > CR_MAX_N) ? CR_MAX_N : r2left;
+        comm_irecv(&req[nr++],&p->comm,
+                   recv[1]+r2off,r2n*sizeof(uint),p->comm.id-1,tag+1);
+      }
+
+      if(sleft) {
+        sn = (sleft > CR_MAX_N) ? CR_MAX_N : sleft;
+        comm_isend(&req[nr++],&p->comm,
+                   (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
+      }
+
+      r1off += r1n; r1left -= r1n;
+      r2off += r2n; r2left -= r2n;
+      soff  += sn;  sleft  -= sn;
+    }
+    if(nr>0) comm_wait(req,nr);
+
+  } else {
+    if(recvn)    comm_irecv(&req[1],&p->comm,
+                            recv[0],count_long[0]*sizeof(uint), targ        ,tag+1);
+    if(recvn==2) comm_irecv(&req[2],&p->comm,
+                            recv[1],count_long[1]*sizeof(uint), p->comm.id-1,tag+1);
+    comm_isend(&req[0],&p->comm, p->work.ptr,send_n_long*sizeof(uint), targ,tag+1);
+    comm_wait(req,recvn+1);
   }
-  if(nr>0) comm_wait(req,nr);
-//  if(recvn)    comm_irecv(&req[1],&p->comm,
-//                          recv[0],count_long[0]*sizeof(uint), targ        ,tag+1);
-//  if(recvn==2) comm_irecv(&req[2],&p->comm,
-//                          recv[1],count_long[1]*sizeof(uint), p->comm.id-1,tag+1);
-//  comm_isend(&req[0],&p->comm, p->work.ptr,send_n_long*sizeof(uint), targ,tag+1);
-//  comm_wait(req,recvn+1);
+
   return sum_long;
 }
 

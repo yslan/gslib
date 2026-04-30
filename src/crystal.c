@@ -119,35 +119,68 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
   p->data.n = sum_long;
 
-  // send/recv in batches if exceed MAX_INT/2 (in case recv 2)
-  if(recvn) {
-    msg_off=0, msg_left=count_long[0];
-    while(msg_left) {
-      msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
-      comm_irecv(&req[1],&p->comm,recv[0]+msg_off,msg_n*sizeof(uint), targ,tag+1);
-      comm_wait(&req[1],1);
-      msg_off += msg_n;
-      msg_left -= msg_n;
+  ulong soff=0, sleft=send_n_long;
+  ulong r0off=0, r0left=count_long[0];
+  ulong r1off=0, r1left=count_long[1];
+  
+  while(sleft || r0left || r1left) {
+    int nr = 0;
+    ulong sn=0, r0n=0, r1n=0;
+  
+    if(recvn && r0left) {
+      r0n = (r0left > CR_MAX_N) ? CR_MAX_N : r0left;
+      comm_irecv(&req[nr++],&p->comm,
+                 recv[0]+r0off,r0n*sizeof(uint),targ,tag+1);
     }
-  }
-  if(recvn==2) {
-    msg_off=0, msg_left=count_long[1];
-    while(msg_left) {
-      msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
-      comm_irecv(&req[2],&p->comm,recv[1]+msg_off,msg_n*sizeof(uint), p->comm.id-1,tag+1);
-      comm_wait(&req[2],1);
-      msg_off += msg_n;
-      msg_left -= msg_n;
+  
+    if(recvn==2 && r1left) {
+      r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
+      comm_irecv(&req[nr++],&p->comm,
+                 recv[1]+r1off,r1n*sizeof(uint),p->comm.id-1,tag+1);
     }
+  
+    if(sleft) {
+      sn = (sleft > CR_MAX_N) ? CR_MAX_N : sleft;
+      comm_isend(&req[nr++],&p->comm,
+                 (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
+    }
+  
+    comm_wait(req,nr);
+  
+    r0off += r0n; r0left -= r0n;
+    r1off += r1n; r1left -= r1n;
+    soff  += sn;  sleft  -= sn;
   }
-  msg_off=0, msg_left=send_n_long;
-  while (msg_left) {
-    msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
-    comm_isend(&req[0],&p->comm,p->work.ptr+msg_off,msg_n*sizeof(uint),targ,tag+1);
-    comm_wait(&req[0],1);
-    msg_off += msg_n;
-    msg_left -= msg_n;
-  }
+
+//  // send/recv in batches if exceed MAX_INT/2 (in case recv 2)
+//  if(recvn) {
+//    msg_off=0, msg_left=count_long[0];
+//    while(msg_left) {
+//      msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
+//      comm_irecv(&req[1],&p->comm,recv[0]+msg_off,msg_n*sizeof(uint), targ,tag+1);
+//      comm_wait(&req[1],1);
+//      msg_off += msg_n;
+//      msg_left -= msg_n;
+//    }
+//  }
+//  if(recvn==2) {
+//    msg_off=0, msg_left=count_long[1];
+//    while(msg_left) {
+//      msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
+//      comm_irecv(&req[2],&p->comm,recv[1]+msg_off,msg_n*sizeof(uint), p->comm.id-1,tag+1);
+//      comm_wait(&req[2],1);
+//      msg_off += msg_n;
+//      msg_left -= msg_n;
+//    }
+//  }
+//  msg_off=0, msg_left=send_n_long;
+//  while (msg_left) {
+//    msg_n = (msg_left > CR_MAX_N) ? CR_MAX_N : msg_left;
+//    comm_isend(&req[0],&p->comm,p->work.ptr+msg_off,msg_n*sizeof(uint),targ,tag+1);
+//    comm_wait(&req[0],1);
+//    msg_off += msg_n;
+//    msg_left -= msg_n;
+//  }
 
 //  if(recvn)    comm_irecv(&req[1],&p->comm,
 //                          recv[0],count_long[0]*sizeof(uint), targ        ,tag+1);

@@ -104,9 +104,11 @@ static ulong crystal_move(struct crystal *p, uint cutoff, int send_hi)
 static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
                              int recvn, int tag)
 {
-  comm_req req[3];
+
   uint *recv[2];
   ulong count_long[2] = {0,0}, sum_long;
+  const int nr_max=3*4;
+  comm_req req[nr_max];
 
   if(recvn) // 1 or 2=recv
     comm_irecv(&req[1],&p->comm, &count_long[0],sizeof(ulong), targ        ,tag);
@@ -124,10 +126,15 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   ulong r1off=0, r1left=count_long[0];
   ulong r2off=0, r2left=count_long[1];
   
+  int nr = 0;
   while(sleft || r1left || r2left) {
-    int nr = 0;
     ulong sn=0, r1n=0, r2n=0;
   
+    if(nr+3>nr_max){
+      comm_wait(req,nr);
+      nr = 0;
+    }
+
     if(recvn && r1left) {
       r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
       comm_irecv(&req[nr++],&p->comm,
@@ -145,13 +152,12 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
       comm_isend(&req[nr++],&p->comm,
                  (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
     }
-  
-    comm_wait(req,nr);
-  
+
     r1off += r1n; r1left -= r1n;
     r2off += r2n; r2left -= r2n;
     soff  += sn;  sleft  -= sn;
   }
+  if(nr>0) comm_wait(req,nr);
 //  if(recvn)    comm_irecv(&req[1],&p->comm,
 //                          recv[0],count_long[0]*sizeof(uint), targ        ,tag+1);
 //  if(recvn==2) comm_irecv(&req[2],&p->comm,

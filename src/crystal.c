@@ -109,7 +109,8 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
 
   uint *recv[2];
   ulong count_long[2] = {0,0}, sum_long;
-  const int nr_max=3*4;
+  const sint nr_max=3*4;
+  sint error;
   comm_req req[nr_max];
 
   if(recvn) // 1 or 2=recv
@@ -120,6 +121,29 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   comm_wait(req,recvn+1);
   
   sum_long = p->data.n + count_long[0] + count_long[1];
+
+  error = 0;
+  if(send_n_long > ((ulong)-1)/sizeof(uint)) error = 1;
+  if(count_long[0] > ((ulong)-1)/sizeof(uint)) error = 2;
+  if(count_long[1] > ((ulong)-1)/sizeof(uint)) error = 3;
+  if(sum_long > ((ulong)-1)/sizeof(uint)) error = 4;
+  if (error) {
+    fprintf(stderr, "Error in crystal_exchange1: rank = %d"
+      " send_n = %llu"
+      " recv1_n = %llu"
+      " recv2_n = %llu"
+      " sum = %llu"
+      " CR_MAX_MSG = %llu\n", p->comm.id,
+      (unsigned long long)send_n_long,
+      (unsigned long long)count_long[0],
+      (unsigned long long)count_long[1],
+      (unsigned long long)sum_long,
+      (unsigned long long)CR_MAX_MSG);
+    fflush(stderr);
+    die(EXIT_FAILURE);
+  }
+
+
   buffer_reserve(&p->data,sum_long*sizeof(uint));
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
   p->data.n = sum_long;
@@ -132,7 +156,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
     ulong r1off=0, r1left=count_long[0];
     ulong r2off=0, r2left=count_long[1];
 
-    int nr = 0;
+    sint nr = 0;
     while(sleft || r1left || r2left) {
       ulong sn=0, r1n=0, r2n=0;
 
@@ -172,6 +196,24 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
                             recv[1],count_long[1]*sizeof(uint), p->comm.id-1,tag+1);
     comm_isend(&req[0],&p->comm, p->work.ptr,send_n_long*sizeof(uint), targ,tag+1);
     comm_wait(req,recvn+1);
+  }
+
+  error = 0;
+  if(send_n_long > ((ulong)-1)/sizeof(uint)) error = 1;
+  if(count_long[0] > ((ulong)-1)/sizeof(uint)) error = 2;
+  if(count_long[1] > ((ulong)-1)/sizeof(uint)) error = 3;
+  if (error) {
+    fprintf(stderr, "Error in crystal_exchange2: rank = %d"
+      " send_n = %llu"
+      " recv1_n = %llu"
+      " recv2_n = %llu"
+      " CR_MAX_MSG = %llu\n", p->comm.id,
+      (unsigned long long)send_n_long,
+      (unsigned long long)count_long[0],
+      (unsigned long long)count_long[1],
+      (unsigned long long)CR_MAX_MSG);
+    fflush(stderr);
+    die(EXIT_FAILURE);
   }
 
   return sum_long;

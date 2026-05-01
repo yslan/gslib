@@ -49,8 +49,10 @@
 #define crystal_free   GS_PREFIXED_NAME(crystal_free  )
 #define crystal_router GS_PREFIXED_NAME(crystal_router)
 
+#define CR_ALIGN 64UL // cache size 64 bytes
 //#define CR_MAX_MSG ((ulong)INT_MAX / 2)
-#define CR_MAX_MSG ((ulong)INT_MAX)
+//#define CR_MAX_MSG ((ulong)INT_MAX)
+#define CR_MAX_MSG (((ulong)INT_MAX - 4096) & ~(CR_ALIGN-1)) // round down to align
 #define CR_MAX_N CR_MAX_MSG/sizeof(uint)
 
 struct crystal {

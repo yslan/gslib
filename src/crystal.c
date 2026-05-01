@@ -110,7 +110,6 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   uint *recv[2];
   ulong count_long[2] = {0,0}, sum_long;
   const sint nr_max=3*4;
-  sint error;
   comm_req req[nr_max];
 
   if(recvn) // 1 or 2=recv
@@ -121,28 +120,6 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   comm_wait(req,recvn+1);
   
   sum_long = p->data.n + count_long[0] + count_long[1];
-
-  error = 0;
-  if(send_n_long > ((ulong)-1)/sizeof(uint)) error = 1;
-  if(count_long[0] > ((ulong)-1)/sizeof(uint)) error = 2;
-  if(count_long[1] > ((ulong)-1)/sizeof(uint)) error = 3;
-  if(sum_long > ((ulong)-1)/sizeof(uint)) error = 4;
-  if (error) {
-    fprintf(stderr, "Error in crystal_exchange1: rank = %d"
-      " send_n = %llu"
-      " recv1_n = %llu"
-      " recv2_n = %llu"
-      " sum = %llu"
-      " CR_MAX_MSG = %llu\n", p->comm.id,
-      (unsigned long long)send_n_long,
-      (unsigned long long)count_long[0],
-      (unsigned long long)count_long[1],
-      (unsigned long long)sum_long,
-      (unsigned long long)CR_MAX_MSG);
-    fflush(stderr);
-    die(EXIT_FAILURE);
-  }
-
 
   buffer_reserve(&p->data,sum_long*sizeof(uint));
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
@@ -198,24 +175,6 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
     comm_wait(req,recvn+1);
   }
 
-  error = 0;
-  if(send_n_long > ((ulong)-1)/sizeof(uint)) error = 1;
-  if(count_long[0] > ((ulong)-1)/sizeof(uint)) error = 2;
-  if(count_long[1] > ((ulong)-1)/sizeof(uint)) error = 3;
-  if (error) {
-    fprintf(stderr, "Error in crystal_exchange2: rank = %d"
-      " send_n = %llu"
-      " recv1_n = %llu"
-      " recv2_n = %llu"
-      " CR_MAX_MSG = %llu\n", p->comm.id,
-      (unsigned long long)send_n_long,
-      (unsigned long long)count_long[0],
-      (unsigned long long)count_long[1],
-      (unsigned long long)CR_MAX_MSG);
-    fflush(stderr);
-    die(EXIT_FAILURE);
-  }
-
   return sum_long;
 }
 
@@ -232,15 +191,15 @@ void crystal_router(struct crystal *p)
     send_hi = id<bh;
     send_n_long = crystal_move(p,bh,send_hi);
 
-    send_n_long_b = send_n_long * sizeof(uint);
-    overflow = (send_n_long_b >= CR_MAX_MSG);
-    if (overflow) {
-      fprintf(stderr, "Error in crystal_router1: rank = %d send_n = %llu (> "
-        "INT_MAX = %llu)\n", p->comm.id,
-        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
-      fflush(stderr);
-      //die(EXIT_FAILURE);
-    }
+//    send_n_long_b = send_n_long * sizeof(uint);
+//    overflow = (send_n_long_b >= CR_MAX_MSG);
+//    if (overflow) {
+//      fprintf(stderr, "Error in crystal_router1: rank = %d send_n = %llu (> "
+//        "INT_MAX = %llu)\n", p->comm.id,
+//        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+//      fflush(stderr);
+//      //die(EXIT_FAILURE);
+//    }
 
     recvn = 1, targ = n-1-(id-bl)+bl; // ideal: low - high pariwise
     if(id==targ) targ=bh, recvn=0; // recv nothing
@@ -249,14 +208,14 @@ void crystal_router(struct crystal *p)
     if(id<bh) n=nl; else n-=nl,bl=bh;
     tag += 2;
 
-    send_n_long_b = send_n_long * sizeof(uint);
-    overflow = (send_n_long_b >= CR_MAX_MSG);
-    if (overflow) {
-      fprintf(stderr, "Error in crystal_router2: rank = %d send_n = %llu (> "
-        "INT_MAX = %llu)\n", p->comm.id,
-        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
-      fflush(stderr);
-      //die(EXIT_FAILURE);
-    }
+//    send_n_long_b = send_n_long * sizeof(uint);
+//    overflow = (send_n_long_b >= CR_MAX_MSG);
+//    if (overflow) {
+//      fprintf(stderr, "Error in crystal_router2: rank = %d send_n = %llu (> "
+//        "INT_MAX = %llu)\n", p->comm.id,
+//        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+//      fflush(stderr);
+//      //die(EXIT_FAILURE);
+//    }
   }
 }

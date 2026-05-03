@@ -1,11 +1,11 @@
 /*------------------------------------------------------------------------------
-  
+
   Crystal Router
-  
+
   Accomplishes all-to-all communication in log P msgs per proc
   The routine is low-level; the format of the input/output is an
   array of integers, consisting of a sequence of messages with format:
-  
+
       target proc
       source proc
       m
@@ -17,20 +17,22 @@
   Before crystal_router is called, the source of each message should be
   set to this proc id; upon return from crystal_router, the target of each
   message will be this proc id.
-  
+
   Example Usage:
-  
+
     struct crystal cr;
-    
-    crystal_init(&cr, &comm);  // makes an internal copy of comm
-    
+
+    crystal_init(&cr, &comm);    // makes an internal copy of comm
+
+    crystal_set_verbose(&cr, 1); // (optional) set verbose=1
+
     crystal.data.n = ... ;  // total number of integers (not bytes!)
     buffer_reserve(&cr.data, crystal.n * sizeof(uint));
     ... // fill cr.data.ptr with messages
     crystal_router(&cr);
-    
+
     crystal_free(&cr);
-    
+
   ----------------------------------------------------------------------------*/
 
 #include <stddef.h>
@@ -46,6 +48,7 @@
 #include <stdio.h>
 
 #define crystal_init   GS_PREFIXED_NAME(crystal_init  )
+#define crystal_set_verbose GS_PREFIXED_NAME(crystal_set_verbose)
 #define crystal_free   GS_PREFIXED_NAME(crystal_free  )
 #define crystal_router GS_PREFIXED_NAME(crystal_router)
 
@@ -58,6 +61,7 @@
 struct crystal {
   struct comm comm;
   buffer data, work;
+  sint verbose;
 };
 
 void crystal_init(struct crystal *p, const struct comm *comm)
@@ -65,6 +69,12 @@ void crystal_init(struct crystal *p, const struct comm *comm)
   comm_dup(&p->comm, comm);
   buffer_init(&p->data,1000);
   buffer_init(&p->work,1000);
+  p->verbose = 0;
+}
+
+void crystal_set_verbose(struct crystal *p, const sint verbose)
+{
+  p->verbose = verbose;
 }
 
 void crystal_free(struct crystal *p)
@@ -118,8 +128,15 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
     comm_irecv(&req[2],&p->comm, &count_long[1],sizeof(ulong), p->comm.id-1,tag);
   comm_isend(&req[0],&p->comm, &send_n_long,sizeof(ulong), targ,tag);
   comm_wait(req,recvn+1);
-  
+
   sum_long = p->data.n + count_long[0] + count_long[1];
+  if(p->verbose>1) {
+    fprintf(stdout, "crystal_exchange: rank = %d  (s/r)sizes"
+          "  %llu  %llu  %llu  %llu\n", p->comm.id,
+          (unsigned long long)p->data.n, (unsigned long long)count_long[0],
+          (unsigned long long)count_long[1], (unsigned long long) sum_long);
+        fflush(stdout);
+  }
 
   buffer_reserve(&p->data,sum_long*sizeof(uint));
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
@@ -144,20 +161,50 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
 
       if(recvn && r1left) {
         r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
+        if(p->verbose>1) {
+          fprintf(stdout,
+            "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
+            p->comm.id, tag+1,
+            "R1", targ,
+            (unsigned long long)(r1n*sizeof(uint)),
+            (unsigned long long)r1off,
+            (unsigned long long)r1left);
+          fflush(stdout);
+        }
         comm_irecv(&req[nr++],&p->comm,
                    recv[0]+r1off,r1n*sizeof(uint),targ,tag+1);
       }
 
       if(recvn==2 && r2left) {
         r2n = (r2left > CR_MAX_N) ? CR_MAX_N : r2left;
+        if(p->verbose>1) {
+          fprintf(stdout,
+            "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
+            p->comm.id, tag+1,
+            "R2", p->comm.id-1,
+            (unsigned long long)(r2n*sizeof(uint)),
+            (unsigned long long)r2off,
+            (unsigned long long)r2left);
+          fflush(stdout);
+        }
         comm_irecv(&req[nr++],&p->comm,
                    recv[1]+r2off,r2n*sizeof(uint),p->comm.id-1,tag+1);
       }
 
       if(sleft) {
         sn = (sleft > CR_MAX_N) ? CR_MAX_N : sleft;
+        if(p->verbose>1) {
+          fprintf(stdout,
+            "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
+            p->comm.id, tag+1,
+            "S ", targ,
+            (unsigned long long)(sn*sizeof(uint)),
+            (unsigned long long)soff,
+            (unsigned long long)sleft);
+          fflush(stdout);
+        }
         comm_isend(&req[nr++],&p->comm,
-                   (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
+                   p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
       }
 
       r1off += r1n; r1left -= r1n;
@@ -191,15 +238,16 @@ void crystal_router(struct crystal *p)
     send_hi = id<bh;
     send_n_long = crystal_move(p,bh,send_hi);
 
-//    send_n_long_b = send_n_long * sizeof(uint);
-//    overflow = (send_n_long_b >= CR_MAX_MSG);
-//    if (overflow) {
-//      fprintf(stderr, "Error in crystal_router1: rank = %d send_n = %llu (> "
-//        "INT_MAX = %llu)\n", p->comm.id,
-//        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
-//      fflush(stderr);
-//      //die(EXIT_FAILURE);
-//    }
+    if(p->verbose) {
+      send_n_long_b = send_n_long * sizeof(uint);
+      overflow = (send_n_long_b >= CR_MAX_MSG);
+      if (overflow) {
+        fprintf(stdout, "Warning in crystal_router1: rank = %d send_n = %llu (> "
+          "INT_MAX = %llu)\n", p->comm.id,
+          (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+        fflush(stdout);
+      }
+    }
 
     recvn = 1, targ = n-1-(id-bl)+bl; // ideal: low - high pariwise
     if(id==targ) targ=bh, recvn=0; // recv nothing
@@ -208,14 +256,15 @@ void crystal_router(struct crystal *p)
     if(id<bh) n=nl; else n-=nl,bl=bh;
     tag += 2;
 
-//    send_n_long_b = send_n_long * sizeof(uint);
-//    overflow = (send_n_long_b >= CR_MAX_MSG);
-//    if (overflow) {
-//      fprintf(stderr, "Error in crystal_router2: rank = %d send_n = %llu (> "
-//        "INT_MAX = %llu)\n", p->comm.id,
-//        (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
-//      fflush(stderr);
-//      //die(EXIT_FAILURE);
-//    }
+    if(p->verbose) {
+      send_n_long_b = send_n_long * sizeof(uint);
+      overflow = (send_n_long_b >= CR_MAX_MSG);
+      if (overflow) {
+        fprintf(stdout, "Warning in crystal_router2: rank = %d send_n = %llu (> "
+          "INT_MAX = %llu)\n", p->comm.id,
+          (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+        fflush(stdout);
+      }
+    }
   }
 }

@@ -53,10 +53,14 @@
 #define crystal_router GS_PREFIXED_NAME(crystal_router)
 
 #define CR_ALIGN 64UL // cache size 64 bytes
-//#define CR_MAX_MSG ((ulong)INT_MAX / 2)
-//#define CR_MAX_MSG ((ulong)INT_MAX)
+// CR_MAX_MSG: per-MPI-call byte ceiling (< INT_MAX, aligned). Overridable via
+// -DCR_MAX_MSG=<bytes> to force the batched path at small sizes for testing.
+#ifndef CR_MAX_MSG
 #define CR_MAX_MSG (((ulong)INT_MAX - 4096) & ~(CR_ALIGN-1)) // round down to align
+#endif
+#ifndef CR_MAX_N
 #define CR_MAX_N CR_MAX_MSG/sizeof(uint)
+#endif
 
 struct crystal {
   struct comm comm;
@@ -75,6 +79,8 @@ void crystal_init(struct crystal *p, const struct comm *comm)
 void crystal_set_verbose(struct crystal *p, const sint verbose)
 {
   p->verbose = verbose;
+  if(verbose && p->comm.id==0)
+    fprintf(stdout, "crystal_set_verbose: verbose=%d\n", p->verbose);
 }
 
 void crystal_free(struct crystal *p)
@@ -96,15 +102,18 @@ static ulong crystal_move(struct crystal *p, uint cutoff, int send_hi)
   uint *keep = p->data.ptr, *send;
   ulong n = p->data.n, len;
   send = buffer_reserve(&p->work,n*sizeof(uint));
+  /* len is ulong, but src[2] (per-message length field) is a uint on the wire,
+     so 3+src[2] is a uint add: a single message is capped at UINT_MAX uints.
+     Lifting this needs a wire-format change (F5/D2 in LOGBOOK_A.md). */
   if(send_hi) { /* send hi, keep lo */
     for(src=keep,end=keep+n; src<end; src+=len) {
-      len = 3 + src[2];
+      len = 3 + (ulong)src[2];
       if(src[0]>=cutoff) memcpy (send,src,len*sizeof(uint)), send+=len;
       else               uintcpy(keep,src,len),              keep+=len;
     }
   } else      { /* send lo, keep hi */
     for(src=keep,end=keep+n; src<end; src+=len) {
-      len = 3 + src[2];
+      len = 3 + (ulong)src[2];
       if(src[0]< cutoff) memcpy (send,src,len*sizeof(uint)), send+=len;
       else               uintcpy(keep,src,len),              keep+=len;
     }
@@ -131,10 +140,18 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
 
   sum_long = p->data.n + count_long[0] + count_long[1];
   if(p->verbose>1) {
-    fprintf(stdout, "crystal_exchange: rank = %d  (s/r)sizes"
+    fprintf(stdout, "crystal_exchange: rank = %d  buf sizes"
           "  %llu  %llu  %llu  %llu\n", p->comm.id,
           (unsigned long long)p->data.n, (unsigned long long)count_long[0],
           (unsigned long long)count_long[1], (unsigned long long) sum_long);
+    /* per-round data-flow record (for tests/viz_flow.py). keep = kept after
+       crystal_move, send = shipped to targ, recv = received, hold = held after */
+    fprintf(stdout, "CRFLOW round=%d rank=%d targ=%u recvn=%d"
+          " send=%llu keep=%llu recv=%llu hold=%llu\n",
+          tag/2, p->comm.id, targ, recvn,
+          (unsigned long long)send_n_long, (unsigned long long)p->data.n,
+          (unsigned long long)(count_long[0]+count_long[1]),
+          (unsigned long long)sum_long);
         fflush(stdout);
   }
 
@@ -204,7 +221,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
           fflush(stdout);
         }
         comm_isend(&req[nr++],&p->comm,
-                   p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
+                   (uint*)p->work.ptr+soff,sn*sizeof(uint),targ,tag+1);
       }
 
       r1off += r1n; r1left -= r1n;

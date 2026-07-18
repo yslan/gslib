@@ -14,6 +14,7 @@ jobs:
           - { test: crystal_test,            np: 2 }
           - { test: crystal_test2,           np: 2 }
           - { test: crystal_test2,           np: 2, cflags: "-O2 -DCR_MAX_MSG=4096UL", args: "-E 64 -n 2" }
+          - { test: crystal_test2,           np: 2, args: "-E 64 -n 2 -M 4096" }
           - { test: findpts_el_2_test,       np: 2 }
           - { test: findpts_el_2_test2,      np: 2 }
           - { test: findpts_el_3_test,       np: 2 }
@@ -44,7 +45,7 @@ jobs:
       UCX_TLS: sm,self,tcp
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install MPI
         run: |

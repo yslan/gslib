@@ -48,6 +48,7 @@ typedef struct {
   int verbose;
   int nelt;
   int network;
+  long maxmsg; /* runtime CR_MAX_MSG cap in bytes; 0 = library default */
 } options_t;
 
 static const char *net_name(int n)
@@ -63,9 +64,11 @@ static const char *net_name(int n)
 static void usage(const char *prog)
 {
   fprintf(stderr,
-    "Usage: %s [-E N] [-n N] [-v] [-h]\n"
+    "Usage: %s [-E N] [-n N] [-M N] [-v] [-h]\n"
     "  -E, --nelt N    : elements per rank (default: 1024)\n"
     "  -n, --network N : all-to-all mode (0=chain, 1=half, 2=all2one)\n"
+    "  -M, --maxmsg N  : runtime per-MPI-call cap in bytes (0=default;\n"
+    "                    small values force the batched path, e.g. 4096)\n"
     "  -v, --verbose   : enable verbose output (traffic inspection)\n"
     "  -h, --help      : show this help\n",
     prog);
@@ -78,6 +81,7 @@ static uint parse_args(int argc, char **argv, options_t *opt)
   opt->verbose = 0;
   opt->nelt = 1024;
   opt->network = NET_CHAIN;
+  opt->maxmsg = 0;
 
   for(int i = 1; i < argc; ++i) {
 
@@ -103,6 +107,14 @@ static uint parse_args(int argc, char **argv, options_t *opt)
         return 1;
       }
       opt->network = atoi(argv[++i]);
+
+    } else if(strcmp(argv[i], "--maxmsg") == 0 || strcmp(argv[i], "-M") == 0) {
+      if(i + 1 >= argc) {
+        fprintf(stderr, "Missing value for --maxmsg\n");
+        usage(argv[0]);
+        return 1;
+      }
+      opt->maxmsg = atol(argv[++i]);
 
     } else {
       fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -180,13 +192,15 @@ int main(int argc, char *argv[])
            np, nelt, (unsigned long long)nelgt, opt.network,
            net_name(opt.network), opt.verbose);
     printf("  payload=%d doubles/elem, msg=%llu uints/elem, "
-           "send buf=%llu uints/rank\n", lxyz,
-           (unsigned long long)MSG_N, (unsigned long long)((ulong)nelt*MSG_N));
+           "send buf=%llu uints/rank  maxmsg=%ld bytes (0=default)\n", lxyz,
+           (unsigned long long)MSG_N, (unsigned long long)((ulong)nelt*MSG_N),
+           opt.maxmsg);
     fflush(stdout);
   }
 
   crystal_init(&cr,&comm);
   if(verbose) crystal_set_verbose(&cr, verbose+1); /* level 2: chunk traces */
+  if(opt.maxmsg > 0) crystal_set_max_msg(&cr, (ulong)opt.maxmsg); /* runtime cap */
 
   /* local element identities */
   heg = tmalloc(ulong, nelt);

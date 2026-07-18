@@ -38,6 +38,10 @@ jobs:
       NP: ${{ matrix.np }}
       CFLAGS: ${{ matrix.cflags }}
       ARGS: ${{ matrix.args }}
+      # ubuntu-latest (24.04) mpich uses the ch4:ucx device; on hardware without
+      # RDMA/InfiniBand, UCX aborts MPI_Init in ibv_create_srq() ("Operation not
+      # supported"). Restrict UCX to shared-memory / loopback / tcp transports.
+      UCX_TLS: sm,self,tcp
 
     steps:
       - uses: actions/checkout@v4

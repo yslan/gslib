@@ -49,6 +49,7 @@
 
 #define crystal_init   GS_PREFIXED_NAME(crystal_init  )
 #define crystal_set_verbose GS_PREFIXED_NAME(crystal_set_verbose)
+#define crystal_set_max_msg GS_PREFIXED_NAME(crystal_set_max_msg)
 #define crystal_free   GS_PREFIXED_NAME(crystal_free  )
 #define crystal_router GS_PREFIXED_NAME(crystal_router)
 
@@ -62,11 +63,19 @@
 #define CR_MAX_N CR_MAX_MSG/sizeof(uint)
 #endif
 
+/* NOTE: this struct is duplicated in crystal.h; keep the two copies in sync. */
 struct crystal {
   struct comm comm;
   buffer data, work;
   sint verbose;
+  ulong max_msg; /* runtime per-MPI-call byte cap; 0 = compile-time CR_MAX_MSG */
 };
+
+/* effective per-call caps for this crystal (bytes / uints): field or default */
+static ulong cr_max_msg(const struct crystal *p)
+{ return p->max_msg ? p->max_msg : CR_MAX_MSG; }
+static ulong cr_max_n(const struct crystal *p)
+{ return cr_max_msg(p)/sizeof(uint); }
 
 void crystal_init(struct crystal *p, const struct comm *comm)
 {
@@ -74,6 +83,7 @@ void crystal_init(struct crystal *p, const struct comm *comm)
   buffer_init(&p->data,1000);
   buffer_init(&p->work,1000);
   p->verbose = 0;
+  p->max_msg = 0;
 }
 
 void crystal_set_verbose(struct crystal *p, const sint verbose)
@@ -81,6 +91,30 @@ void crystal_set_verbose(struct crystal *p, const sint verbose)
   p->verbose = verbose;
   if(verbose && p->comm.id==0)
     fprintf(stdout, "crystal_set_verbose: verbose=%d\n", p->verbose);
+}
+
+/* Set the per-MPI-call byte cap at runtime. 0 restores the compile-time
+   default (CR_MAX_MSG). Values are clamped to (0, INT_MAX) and rounded down to
+   CR_ALIGN; a positive value below one uint is a usage error (fail). This
+   validation is what preserves the Plan A invariant: MPI byte counts must stay
+   representable in an int. */
+void crystal_set_max_msg(struct crystal *p, const ulong max_msg_bytes)
+{
+  ulong v = max_msg_bytes;
+  if(v==0) {                     /* sentinel: use compile-time default */
+    p->max_msg = 0;
+  } else {
+    if(v < CR_ALIGN)             /* must be at least one aligned block */
+      fail(1,__FILE__,__LINE__,
+           "crystal_set_max_msg: cap %llu bytes too small (< CR_ALIGN=%llu)",
+           (unsigned long long)max_msg_bytes, (unsigned long long)CR_ALIGN);
+    if(v >= (ulong)INT_MAX) v = (ulong)INT_MAX - 4096; /* clamp below int cap */
+    v &= ~(CR_ALIGN-1);                                /* align down          */
+    p->max_msg = v;
+  }
+  if(p->verbose && p->comm.id==0)
+    fprintf(stdout, "crystal_set_max_msg: max_msg=%llu bytes (0=default -> %llu)\n",
+            (unsigned long long)p->max_msg, (unsigned long long)cr_max_msg(p));
 }
 
 void crystal_free(struct crystal *p)
@@ -159,9 +193,10 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
   recv[0] = (uint*)p->data.ptr + p->data.n, recv[1] = recv[0] + count_long[0];
   p->data.n = sum_long;
 
-  if(send_n_long > CR_MAX_N ||
-      count_long[0] > CR_MAX_N ||
-      count_long[1] > CR_MAX_N) {
+  const ulong maxn = cr_max_n(p); /* effective per-call uint cap (hoisted) */
+  if(send_n_long > maxn ||
+      count_long[0] > maxn ||
+      count_long[1] > maxn) {
 
     ulong soff=0, sleft=send_n_long;
     ulong r1off=0, r1left=count_long[0];
@@ -177,7 +212,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
       }
 
       if(recvn && r1left) {
-        r1n = (r1left > CR_MAX_N) ? CR_MAX_N : r1left;
+        r1n = (r1left > maxn) ? maxn : r1left;
         if(p->verbose>1) {
           fprintf(stdout,
             "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
@@ -193,7 +228,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
       }
 
       if(recvn==2 && r2left) {
-        r2n = (r2left > CR_MAX_N) ? CR_MAX_N : r2left;
+        r2n = (r2left > maxn) ? maxn : r2left;
         if(p->verbose>1) {
           fprintf(stdout,
             "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
@@ -209,7 +244,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
       }
 
       if(sleft) {
-        sn = (sleft > CR_MAX_N) ? CR_MAX_N : sleft;
+        sn = (sleft > maxn) ? maxn : sleft;
         if(p->verbose>1) {
           fprintf(stdout,
             "CR %d tag=%d %s peer=%u size=%llu off=%llu left=%llu\n",
@@ -257,11 +292,11 @@ void crystal_router(struct crystal *p)
 
     if(p->verbose) {
       send_n_long_b = send_n_long * sizeof(uint);
-      overflow = (send_n_long_b >= CR_MAX_MSG);
+      overflow = (send_n_long_b >= cr_max_msg(p));
       if (overflow) {
         fprintf(stdout, "Warning in crystal_router1: rank = %d send_n = %llu (> "
           "INT_MAX = %llu)\n", p->comm.id,
-          (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+          (unsigned long long)send_n_long_b, (unsigned long long)cr_max_msg(p));
         fflush(stdout);
       }
     }
@@ -275,11 +310,11 @@ void crystal_router(struct crystal *p)
 
     if(p->verbose) {
       send_n_long_b = send_n_long * sizeof(uint);
-      overflow = (send_n_long_b >= CR_MAX_MSG);
+      overflow = (send_n_long_b >= cr_max_msg(p));
       if (overflow) {
         fprintf(stdout, "Warning in crystal_router2: rank = %d send_n = %llu (> "
           "INT_MAX = %llu)\n", p->comm.id,
-          (unsigned long long)send_n_long_b, (unsigned long long)CR_MAX_MSG);
+          (unsigned long long)send_n_long_b, (unsigned long long)cr_max_msg(p));
         fflush(stdout);
       }
     }

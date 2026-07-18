@@ -276,6 +276,7 @@ void ffindptsms_setup(sint *const handle,
     comm_init_check(&fd->cr.comm, *comm, *np);
     buffer_init(&fd->cr.data,1000);
     buffer_init(&fd->cr.work,1000);
+    fd->cr.verbose = 0; fd->cr.max_msg = 0; /* hand-rolled: set all fields */
     setupms_aux_2(fd, elx,n,*nel,m,*bbox_tol,
                 *loc_hash_size,*gbl_hash_size, *npt_max, *newt_tol, nsid, distfint,ims);
   } else if(h->ndim==3) {
@@ -289,6 +290,7 @@ void ffindptsms_setup(sint *const handle,
     comm_init_check(&fd->cr.comm, *comm, *np);
     buffer_init(&fd->cr.data,1000);
     buffer_init(&fd->cr.work,1000);
+    fd->cr.verbose = 0; fd->cr.max_msg = 0; /* hand-rolled: set all fields */
     setupms_aux_3(fd, elx,n,*nel,m,*bbox_tol,
                 *loc_hash_size,*gbl_hash_size, *npt_max, *newt_tol, nsid, distfint,ims);
   } else
@@ -327,6 +329,7 @@ void ffindpts_setup(sint *const handle,
     comm_init_check(&fd->cr.comm, *comm, *np);
     buffer_init(&fd->cr.data,1000);
     buffer_init(&fd->cr.work,1000);
+    fd->cr.verbose = 0; fd->cr.max_msg = 0; /* hand-rolled: set all fields */
     unsigned int *nsid = tmalloc(uint,1);
     double *distfint = tmalloc(double,1);
     *nsid = 0;
@@ -344,6 +347,7 @@ void ffindpts_setup(sint *const handle,
     comm_init_check(&fd->cr.comm, *comm, *np);
     buffer_init(&fd->cr.data,1000);
     buffer_init(&fd->cr.work,1000);
+    fd->cr.verbose = 0; fd->cr.max_msg = 0; /* hand-rolled: set all fields */
     const uint *nsid;
     const double *distfint;
     setupms_aux_3(fd, elx,n,*nel,m,*bbox_tol,

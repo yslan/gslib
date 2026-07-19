@@ -53,11 +53,12 @@
 #define crystal_free   GS_PREFIXED_NAME(crystal_free  )
 #define crystal_router GS_PREFIXED_NAME(crystal_router)
 
-#define CR_ALIGN 64UL // cache size 64 bytes
+#define CR_ALIGN 64UL      // cache size 64 bytes
+#define CR_INT_MARGIN 4096UL // safety margin kept below INT_MAX for the byte cap
 // CR_MAX_MSG: per-MPI-call byte ceiling (< INT_MAX, aligned). Overridable via
 // -DCR_MAX_MSG=<bytes> to force the batched path at small sizes for testing.
 #ifndef CR_MAX_MSG
-#define CR_MAX_MSG (((ulong)INT_MAX - 4096) & ~(CR_ALIGN-1)) // round down to align
+#define CR_MAX_MSG (((ulong)INT_MAX - CR_INT_MARGIN) & ~(CR_ALIGN-1)) // align down
 #endif
 #ifndef CR_MAX_N
 #define CR_MAX_N CR_MAX_MSG/sizeof(uint)
@@ -108,8 +109,8 @@ void crystal_set_max_msg(struct crystal *p, const ulong max_msg_bytes)
       fail(1,__FILE__,__LINE__,
            "crystal_set_max_msg: cap %llu bytes too small (< CR_ALIGN=%llu)",
            (unsigned long long)max_msg_bytes, (unsigned long long)CR_ALIGN);
-    if(v >= (ulong)INT_MAX) v = (ulong)INT_MAX - 4096; /* clamp below int cap */
-    v &= ~(CR_ALIGN-1);                                /* align down          */
+    if(v >= (ulong)INT_MAX) v = (ulong)INT_MAX - CR_INT_MARGIN; /* clamp < int */
+    v &= ~(CR_ALIGN-1);                                         /* align down  */
     p->max_msg = v;
   }
   if(p->verbose && p->comm.id==0)
@@ -162,7 +163,7 @@ static ulong crystal_exchange(struct crystal *p, ulong send_n_long, uint targ,
 
   uint *recv[2];
   ulong count_long[2] = {0,0}, sum_long;
-  const sint nr_max=3*4;
+  enum { nr_max = 3*4 }; /* fixed request-pool size (not a VLA) */
   comm_req req[nr_max];
 
   if(recvn) // 1 or 2=recv
@@ -281,10 +282,26 @@ void crystal_router(struct crystal *p)
 {
   uint bl=0, bh, nl;
   uint id = p->comm.id, n=p->comm.np;
-  uint targ, tag = 0;
+  uint targ;
+  int tag = 0; /* passed to comm_isend/irecv as int (matches MPI tag type) */
   ulong send_n_long, send_n_long_b;
   sint overflow;
   int send_hi, recvn;
+
+  /* The batched protocol pairs ranks; both peers must chunk into the same
+     number/sizes of messages, so the effective cap must be identical on every
+     rank. crystal_set_max_msg is per-rank, so verify collectively (once). */
+  if(n>1) {
+    slong cap[2], wk[2];
+    cap[0] = (slong)cr_max_n(p); cap[1] = -cap[0];
+    comm_allreduce(&p->comm, gs_slong, gs_min, cap, 2, wk);
+    if(cap[0] != -cap[1])
+      fail(1,__FILE__,__LINE__,
+           "crystal_router: max_msg differs across ranks (min cap %lld != max "
+           "%lld uints); crystal_set_max_msg must be called collectively with "
+           "the same value on every rank", (long long)cap[0], (long long)(-cap[1]));
+  }
+
   while(n>1) {
     nl = (n+1)/2, bh = bl+nl; // if uneven, low has more
     send_hi = id<bh;
@@ -294,8 +311,8 @@ void crystal_router(struct crystal *p)
       send_n_long_b = send_n_long * sizeof(uint);
       overflow = (send_n_long_b >= cr_max_msg(p));
       if (overflow) {
-        fprintf(stdout, "Warning in crystal_router1: rank = %d send_n = %llu (> "
-          "INT_MAX = %llu)\n", p->comm.id,
+        fprintf(stdout, "crystal_router: rank %d pre-xchg batching send=%llu B "
+          "(> cap=%llu B)\n", p->comm.id,
           (unsigned long long)send_n_long_b, (unsigned long long)cr_max_msg(p));
         fflush(stdout);
       }
@@ -312,8 +329,8 @@ void crystal_router(struct crystal *p)
       send_n_long_b = send_n_long * sizeof(uint);
       overflow = (send_n_long_b >= cr_max_msg(p));
       if (overflow) {
-        fprintf(stdout, "Warning in crystal_router2: rank = %d send_n = %llu (> "
-          "INT_MAX = %llu)\n", p->comm.id,
+        fprintf(stdout, "crystal_router: rank %d post-xchg buf=%llu B "
+          "(> cap=%llu B)\n", p->comm.id,
           (unsigned long long)send_n_long_b, (unsigned long long)cr_max_msg(p));
         fflush(stdout);
       }
